@@ -139,6 +139,15 @@ env_variables: Dict[str, Callable[[], Any]] = {
     # Whether to anbale balance scheduling
     "VLLM_ASCEND_BALANCE_SCHEDULING":
     lambda: bool(int(os.getenv("VLLM_ASCEND_BALANCE_SCHEDULING", '0'))),
+    # Whether to enable RFork elastic fast load.
+    "VLLM_RFORK_ENABLED":
+    lambda: bool(int(os.getenv("VLLM_RFORK_ENABLED", "0"))),
+    # RFork planner URL, for example: http://127.0.0.1:1223
+    "RFORK_SCHEDULER_URL":
+    lambda: os.getenv("RFORK_SCHEDULER_URL", None),
+    # RFork seed key separator.
+    "RFORK_SEED_KEY_SEPERATOR":
+    lambda: os.getenv("RFORK_SEED_KEY_SEPERATOR", "$"),
 }
 
 # end-env-vars-definition

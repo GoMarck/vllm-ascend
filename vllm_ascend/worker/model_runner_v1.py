@@ -36,7 +36,8 @@ from vllm.attention.layer import Attention, MLAAttention
 from vllm.attention.selector import get_attn_backend
 from vllm.config import (CompilationMode, CUDAGraphMode, VllmConfig,
                          get_layers_from_vllm_config)
-from vllm.distributed import (get_tensor_model_parallel_world_size,
+from vllm.distributed import (get_tensor_model_parallel_rank,
+                              get_tensor_model_parallel_world_size,
                               tensor_model_parallel_all_gather)
 from vllm.distributed.ec_transfer import get_ec_transfer, has_ec_transfer
 from vllm.distributed.kv_transfer import (get_kv_transfer_group,
@@ -99,6 +100,8 @@ from vllm_ascend.eplb.core.eplb_utils import EPLBParamUtils
 from vllm_ascend.eplb.core.eplb_worker import EplbProcess
 from vllm_ascend.eplb.eplb_updator import EplbUpdator
 from vllm_ascend.eplb.utils import model_register
+import vllm_ascend.envs as envs_ascend
+from vllm_ascend.model_loader.rfork.rfork_worker import RForkWorker
 from vllm_ascend.ops.rotary_embedding import set_cos_and_sin, update_cos_sin
 from vllm_ascend.patch.worker.patch_module import patch_torch_npu_argsort
 from vllm_ascend.sample.sampler import AscendSampler
@@ -2374,11 +2377,72 @@ class NPUModelRunner(GPUModelRunner):
             self.eplb_updator.set_adaptor(self.eplb_adaptor)
             self.eplb_updator.warm_up_eplb()
 
+    def _try_enable_rfork_load(self) -> None:
+        load_config = self.vllm_config.load_config
+        if load_config is None:
+            return
+
+        rfork_auto_enabled = bool(envs_ascend.VLLM_RFORK_ENABLED)
+        explicit_rfork = str(getattr(load_config, "load_format", "")) == "rfork"
+        should_use_rfork = rfork_auto_enabled or explicit_rfork
+        if not should_use_rfork:
+            return
+
+        fallback = getattr(load_config, "rfork_fallback_load_format", None)
+        if fallback is None:
+            current_load_format = str(getattr(load_config, "load_format", "auto"))
+            # When user explicitly sets --load-format rfork, fallback must not
+            # remain rfork, otherwise transfer failure will recurse forever.
+            fallback = "auto" if current_load_format == "rfork" else current_load_format
+            setattr(load_config, "rfork_fallback_load_format", fallback)
+
+        setattr(load_config, "load_format", "rfork")
+
+        if getattr(load_config, "rfork_worker", None) is not None:
+            return
+
+        try:
+            kv_transfer_config = self.vllm_config.kv_transfer_config
+            disaggregation_mode = (
+                "kv_both" if kv_transfer_config is None else str(kv_transfer_config.kv_role)
+            )
+            gpu_id = 0 if self.device.index is None else self.device.index
+            rfork_worker = RForkWorker(
+                disaggregation_mode=disaggregation_mode,
+                node_rank=self.vllm_config.parallel_config.node_rank,
+                tp_rank=get_tensor_model_parallel_rank(),
+                gpu_id=gpu_id,
+                dtype=str(self.vllm_config.model_config.dtype),
+                is_draft_model=False,
+            )
+            setattr(load_config, "rfork_worker", rfork_worker)
+            logger.info("RFork worker initialized, load_format=rfork")
+        except Exception as e:
+            setattr(load_config, "load_format", fallback)
+            logger.warning(
+                "RFork init failed, fallback to %s. error=%s",
+                fallback,
+                e,
+            )
+            return
+
+    def _maybe_start_rfork_seed_service(self) -> None:
+        load_config = self.vllm_config.load_config
+        rfork_worker = getattr(load_config, "rfork_worker", None)
+        if rfork_worker is None:
+            return
+        try:
+            rfork_worker.start_seed_service(self.model)
+        except Exception as e:
+            logger.warning("start_seed_service failed: %s", e)
+
     def load_model(self) -> None:
         logger.info("Starting to load model %s...", self.model_config.model)
+        self._try_enable_rfork_load()
 
         with DeviceMemoryProfiler() as m:  # noqa: SIM117
             self.model = get_model(vllm_config=self.vllm_config)
+            self._maybe_start_rfork_seed_service()
             if self.dynamic_eplb:
                 model_register(self.model, self.model_config)
             if self.drafter:
