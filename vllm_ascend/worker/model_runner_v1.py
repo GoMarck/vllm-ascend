@@ -51,6 +51,7 @@ from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadataBuilder
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.v1.attention.selector import get_attn_backend  # type: ignore
 from vllm.v1.core.sched.output import SchedulerOutput
+from vllm.v1.worker.utils import select_common_block_size
 from vllm.v1.kv_cache_interface import (
     AttentionSpec,
     EncoderOnlyAttentionSpec,
@@ -87,7 +88,6 @@ from vllm.v1.worker.ubatch_utils import (
     maybe_create_ubatch_slices,
 )
 from vllm.v1.worker.utils import AttentionGroup
-from vllm.v1.worker.utils import select_common_block_size
 
 # yapf: enable
 from vllm_ascend.ascend_config import get_ascend_config
@@ -2201,7 +2201,8 @@ class NPUModelRunner(GPUModelRunner):
                 compress_ratio = getattr(attn_group.kv_cache_spec, "compress_ratio", 1)
                 if for_cudagraph_capture:
                     extra_attn_metadata_args = dict(
-                        compress_ratio=compress_ratio)
+                        compress_ratio=compress_ratio,
+                        ratio_to_sas_metadata=dict())
                 else:
                     # TODO(zxr)
                     extra_attn_metadata_args = dict(
@@ -2924,10 +2925,13 @@ class NPUModelRunner(GPUModelRunner):
         layer_kv_cache_spec = self._get_layer_kv_cache_specs(kv_cache_config)
         for group in self._kv_cache_spec_attn_group_iterator():
             attn_backend = group.backend
+            # TODO(Angazenn): need to align with current implementation
             current_kv_cache_spec = group.kv_cache_spec
             for layer_name in group.layer_names:
                 if layer_name in self.runner_only_attn_layers:
                     continue
+
+                # current_kv_cache_spec = layer_kv_cache_spec[layer_name]
 
                 if isinstance(current_kv_cache_spec, SWAAttentionSpec) or \
                     isinstance(current_kv_cache_spec, CompressAttentionSpec):
@@ -3181,10 +3185,10 @@ class NPUModelRunner(GPUModelRunner):
                 attn_groups = self.attn_groups[kv_cache_group_id]
                 kv_manager_block_size = kv_cache_group.kv_cache_spec.block_size
                 selected_kernel_size = select_common_block_size(
-                    kv_manager_block_size, [attn_group.backend for attn_group in attn_groups]
+                    kv_manager_block_size, attn_groups
                 )
                 self.kernel_block_sizes.append([selected_kernel_size])
-
+                
                 # try:
                 #     attn_groups = self.attn_groups[kv_cache_group_id]
                 # except IndexError:
