@@ -194,8 +194,8 @@ class AscendHybridKVCacheCoordinator(HybridKVCacheCoordinator):
                         alignment_tokens=self.lcm_block_size,
                     )
                     # curr_hit_length need multipy compress_ratio to recover original len
-                    compress_ratio = spec.compress_ratio if hasattr(spec, "compress_ratio") else 1
-                    curr_hit_length = len(hit_blocks[0]) * spec.block_size * compress_ratio
+                    compress_ratio = getattr(spec, "compress_ratio", 0)
+                    curr_hit_length = len(hit_blocks[0]) * spec.block_size * max(compress_ratio, 1)
                     for group_id, blocks in zip(group_ids, hit_blocks):
                         hit_blocks_by_group[group_id] = blocks
 

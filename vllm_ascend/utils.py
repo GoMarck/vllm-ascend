@@ -1449,9 +1449,15 @@ def get_compressed_pos_and_indices(
         # Calculate compressed length of historical & total tokens
         compress_ratio = getattr(kv_cache_group_spec.kv_cache_spec, "compress_ratio", 1)
 
-        compressed_historical_len = num_computed_tokens // compress_ratio
-        compressed_total_len = (num_computed_tokens +
-                                num_scheduled_tokens) // compress_ratio
+        # Note(qcs): some models use compress_ratio=0 as non-compression tag.
+        if compress_ratio > 1:
+            compressed_historical_len = num_computed_tokens // compress_ratio
+            compressed_total_len = (num_computed_tokens +
+                                    num_scheduled_tokens) // compress_ratio
+        else:
+            compressed_historical_len = num_computed_tokens
+            compressed_total_len = (num_computed_tokens + num_scheduled_tokens)
+ 
         # The number of new compressed position ids for each request
         num_new_compressed_pos = compressed_total_len - compressed_historical_len
 
