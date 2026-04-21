@@ -582,7 +582,8 @@ class SpecDecodeBaseProposer(EagleProposer):
         builder = self.draft_attn_groups[0].get_metadata_builder()
         extra_attn_metadata_args = dict(
                     prefill_ratio_to_sas_metadata=dict(),
-                    decode_ratio_to_sas_metadata=dict())
+                    decode_ratio_to_sas_metadata=dict(),
+                    common_ratio_to_sas_metadata=dict())
         attn_metadata = builder.build(0, common_attn_metadata, self.runner.get_model(), **extra_attn_metadata_args)
 
         if self.uses_mrope:
@@ -1259,7 +1260,8 @@ class SpecDecodeBaseProposer(EagleProposer):
         attn_metadata_builder = attn_group.get_metadata_builder()
         extra_attn_metadata_args = dict(
                     prefill_ratio_to_sas_metadata=dict(),
-                    decode_ratio_to_sas_metadata=dict())
+                    decode_ratio_to_sas_metadata=dict(),
+                    common_ratio_to_sas_metadata=dict())
         attn_metadata = attn_metadata_builder.build(
             0,
             common_attn_metadata,
