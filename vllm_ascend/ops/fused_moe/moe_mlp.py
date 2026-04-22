@@ -149,6 +149,7 @@ def quant_apply_mlp(
                 weight_scale=w1_scale,
                 x_scale=pertoken_scale,
                 group_list=cumsum_group_list(group_list, group_list_type, 0),
+                swiglu_limit=10.0,
             )
         elif use_gmm_swiglu_quant_fusion:
             # gmm1: gate_up_proj & act_fn: swiglu
@@ -168,7 +169,7 @@ def quant_apply_mlp(
                 weight_scale=_require_single_tensor_for_swiglu_quant(w1_scale, name="w1_scale"),
                 x_scale=pertoken_scale,
                 bias=None,
-                swiglu_limit=10
+                swiglu_limit=10.0
             )
             if quantized_hidden_states is not None:
                 dispose_tensor(quantized_hidden_states)
@@ -264,6 +265,7 @@ def quant_apply_mlp(
                 x_scale=pertoken_scale,
                 group_list=cumsum_group_list(group_list, group_list_type, 0),
                 bias=bias1,
+                swiglu_limit=10.0,
             )
         elif use_gmm_swiglu_quant_fusion:
             # hidden_states, swiglu_out_scale, _ = DeviceOperator.npu_grouped_matmul_swiglu_quant(
