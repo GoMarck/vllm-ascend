@@ -356,7 +356,10 @@ def _get_kv_cache_groups_uniform_page_size_with_multi_groups(
         # pad it to (13 sw, 13 full) instead of (12 sw, 24 full). 1.25 is just a
         # magic number to avoid too many padding layers.
         group_size = max_num_layers
-    group_size = 22
+    # group_size = 22
+    # TODO(lxs): generalize the logic for determining group size.
+    # Now, we use num_hidden_layers // 2 as the group size for DSV4.
+    group_size = cdiv(len(kv_cache_spec_list), 2)
     grouped_layers = []
     group_layer_specs = []
     for layer_spec, layers in same_type_layers.items():
