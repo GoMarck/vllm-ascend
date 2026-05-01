@@ -42,8 +42,8 @@ class DeepseekV4Config(PretrainedConfig):
             Number of routed experts.
         routed_scaling_factor (`float`, *optional*, defaults to 2.5):
             Scaling factor or routed experts.
-        kv_lora_rank (`int`, *optional*, defaults to 512):
-            Rank of the LoRA matrices for key and value projections.
+        o_lora_rank (`int`, *optional*, defaults to 1024):
+            Rank of the LoRA matrices for output projections.
         q_lora_rank (`int`, *optional*, defaults to 1536):
             Rank of the LoRA matrices for query projections.
         qk_rope_head_dim (`int`, *optional*, defaults to 64):
@@ -151,4 +151,7 @@ class DeepseekV4Config(PretrainedConfig):
                     self.rope_scaling[key] = float(self.rope_scaling[key])
 
         rope_config_validation(self)
-        self.kv_lora_rank = kwargs.get("o_lora_rank", 1024)
+
+        # Some shared vLLM/Ascend paths still query kv_lora_rank for KV cache
+        # sizing. DeepSeek V4 config.json names this rank o_lora_rank.
+        self.kv_lora_rank = getattr(self, "o_lora_rank", 1024)

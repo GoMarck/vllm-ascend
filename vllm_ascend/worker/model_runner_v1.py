@@ -3376,7 +3376,7 @@ class NPUModelRunner(GPUModelRunner):
                 num_kv_heads=1,
                 head_size=hf_config.head_dim,
                 dtype=torch.bfloat16,
-                sliding_window=hf_config.window_size,
+                sliding_window=hf_config.sliding_window,
                 page_size_padded=pad_size,
             ))
         elif layer_id % 2 == 0:
@@ -3386,8 +3386,8 @@ class NPUModelRunner(GPUModelRunner):
                 num_kv_heads=1,
                 head_size=hf_config.head_dim,
                 nope_dim=hf_config.head_dim -
-                hf_config.rope_head_dim,
-                rope_dim=hf_config.rope_head_dim,
+                hf_config.qk_rope_head_dim,
+                rope_dim=hf_config.qk_rope_head_dim,
                 scale_dim=0,
                 dtype=torch.bfloat16,
                 page_size_padded=pad_size,
@@ -3397,7 +3397,7 @@ class NPUModelRunner(GPUModelRunner):
                 num_kv_heads=1,
                 head_size=hf_config.head_dim,
                 dtype=torch.bfloat16,
-                sliding_window=hf_config.window_size,
+                sliding_window=hf_config.sliding_window,
                 page_size_padded=pad_size,
             ))
             kv_cache_spec_list.append(C4IndexerSpec(
@@ -3444,8 +3444,8 @@ class NPUModelRunner(GPUModelRunner):
                 num_kv_heads=1,
                 head_size=hf_config.head_dim,
                 nope_dim=hf_config.head_dim -
-                hf_config.rope_head_dim,
-                rope_dim=hf_config.rope_head_dim,
+                hf_config.qk_rope_head_dim,
+                rope_dim=hf_config.qk_rope_head_dim,
                 scale_dim=0,
                 dtype=torch.bfloat16,
                 page_size_padded=pad_size,
@@ -3455,7 +3455,7 @@ class NPUModelRunner(GPUModelRunner):
                 num_kv_heads=1,
                 head_size=hf_config.head_dim,
                 dtype=torch.bfloat16,
-                sliding_window=hf_config.window_size,
+                sliding_window=hf_config.sliding_window,
                 page_size_padded=pad_size,
             ))
             # TODO(cmq): get window size from hf_config, instead of hard code in spec class
