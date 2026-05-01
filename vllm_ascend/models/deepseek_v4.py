@@ -488,11 +488,11 @@ class Compressor(nn.Module):
 
         self.ape = nn.Parameter(
             torch.empty(compress_ratio,
-                        coff * self.head_dim,
+                        self.coff * self.head_dim,
                         dtype=torch.float32))
         self.wkv = ReplicatedLinear(
             self.dim,
-            coff * self.head_dim,
+            self.coff * self.head_dim,
             bias=False,
             quant_config=quant_config,
             prefix=f"{prefix}.wkv",
@@ -500,7 +500,7 @@ class Compressor(nn.Module):
         )
         self.wgate = ReplicatedLinear(
             self.dim,
-            coff * self.head_dim,
+            self.coff * self.head_dim,
             bias=False,
             quant_config=quant_config,
             prefix=f"{prefix}.wgate",
