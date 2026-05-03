@@ -25,6 +25,7 @@ from vllm.v1.kv_cache_interface import (
     SlidingWindowSpec,
     UniformTypeKVCacheSpecs,
 )
+from vllm.v1.core.kv_cache_utils import BlockHash
 from vllm.logger import init_logger
 from vllm.utils.math_utils import cdiv
 from dataclasses import replace
@@ -826,6 +827,11 @@ def get_kv_cache_configs_with_multi_groups(
 
     return kv_cache_configs
 
+def _get_value_at(self, idx: int) -> BlockHash:
+    base = idx * self.scale_factor
+    end = base + self.scale_factor
+    return BlockHash(b"".join(self.block_hashes[base:end]))
+
 if USE_MULTI_GROUPS_KV_CACHE:
     vllm.v1.core.kv_cache_utils.estimate_max_model_len = estimate_max_model_len_with_multi_groups
     vllm.v1.core.kv_cache_utils.check_enough_kv_cache_memory = check_enough_kv_cache_memory_with_multi_groups
@@ -838,3 +844,4 @@ if USE_MULTI_GROUPS_KV_CACHE:
     vllm.v1.core.kv_cache_utils.get_kv_cache_groups = get_kv_cache_groups_with_multi_groups
     vllm.v1.core.kv_cache_utils.get_kv_cache_configs = get_kv_cache_configs_with_multi_groups
     vllm.v1.core.kv_cache_utils.get_all_kvcache_specs_from_list = get_all_kvcache_specs_from_list
+    vllm.v1.core.kv_cache_utils.BlockHashListWithBlockSize._get_value_at = _get_value_at
