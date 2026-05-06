@@ -47,6 +47,19 @@ from vllm.v1.spec_decode.metrics import SpecDecodingStats
 from vllm.v1.utils import ConstantList, record_function_or_nullcontext
 
 
+def _is_a2_deepseek_v4_flash_model(vllm_config: VllmConfig) -> bool:
+    from vllm_ascend.utils import AscendDeviceType, get_ascend_device_type
+
+    if get_ascend_device_type() != AscendDeviceType.A2:
+        return False
+
+    hf_config = vllm_config.model_config.hf_config
+    return (
+        getattr(hf_config, "model_type", None) == "deepseek_v4"
+        and getattr(hf_config, "hidden_size", None) == 4096
+    )
+
+
 # `spec_manager_map` in single_type_kv_cache_manager is a module-level dict
 # whose keys are class objects bound at import time.  When the async
 # recompute scheduler is enabled, `recompute_scheduler.py` is imported by
@@ -119,6 +132,15 @@ class RecomputeScheduler(Scheduler):
             and self.vllm_config.kv_transfer_config
             and self.vllm_config.kv_transfer_config.is_kv_consumer
         )
+        # TODO(#100): Temporary A2-only workaround for DeepSeek-V4-Flash in
+        # recompute + PD disaggregation + MTP KV consumer mode. Using token 0
+        # keeps scheduling compatible, but response format is unavailable on
+        # this path. Remove this branch after the placeholder-token
+        # incompatibility is fixed.
+        self.mtp_kv_consumer_padding_token_id = (
+            0 if _is_a2_deepseek_v4_flash_model(self.vllm_config)
+            else PLACEHOLDER_TOKEN_ID
+        )
         self.is_kv_producer = self.vllm_config.kv_transfer_config and self.vllm_config.kv_transfer_config.is_kv_producer
 
     def add_request(self, request: Request) -> None:
@@ -141,7 +163,7 @@ class RecomputeScheduler(Scheduler):
             # Fill in placeholder tokens to enable full graph compatibility. Without
             # placeholders, graph matching may fail, forcing eager mode execution.
             if self.is_mtp_kv_consumer:
-                request.spec_token_ids = [PLACEHOLDER_TOKEN_ID] * self.num_spec_tokens
+                request.spec_token_ids = [self.mtp_kv_consumer_padding_token_id] * self.num_spec_tokens
             self._enqueue_waiting_request(request)
             self.requests[request.request_id] = request
             if self.log_stats:
