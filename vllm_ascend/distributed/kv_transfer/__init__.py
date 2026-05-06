@@ -16,6 +16,7 @@
 #
 
 from vllm.distributed.kv_transfer.kv_connector.factory import KVConnectorFactory
+from vllm_ascend import envs
 
 
 def register_connector():
@@ -26,8 +27,10 @@ def register_connector():
         "MultiConnector", "vllm_ascend.distributed.kv_transfer.ascend_multi_connector", "AscendMultiConnector"
     )
 
+    connector_path = "vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_hybrid_connector" \
+        if envs.USE_MULTI_GROUPS_KV_CACHE else "vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_connector"
     KVConnectorFactory.register_connector(
-        "MooncakeConnectorV1", "vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_connector", "MooncakeConnector"
+        "MooncakeConnectorV1", connector_path, "MooncakeConnector"
     )
 
     KVConnectorFactory.register_connector(
