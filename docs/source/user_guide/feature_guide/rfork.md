@@ -61,6 +61,19 @@ RFork does not match instances by `model_url` alone. The local seed key is compo
 
 This means two instances must agree on both model identity and deployment topology before the planner will treat them as interchangeable seeds.
 
+### Quantized Models
+
+For quantized models, RFork transfers tensors after Ascend weight post-processing instead of raw checkpoint parameters. The receiver first builds the same post-load tensor layout as the seed, then RFork copies the live NPU tensors used by inference.
+
+This path handles Ascend quantization changes such as weight transposition, NZ format conversion, packed weights, derived scale tensors, and MLA/SFA runtime tensors such as `W_UV` and `W_UK_T`. Empty tensors that were released during post-processing are not included in the transfer manifest.
+
+When validating RFork for a quantized model:
+
+- Apply the same vLLM Ascend code to both the seed instance and the receiver instance.
+- Restart the planner and all vLLM instances after changing RFork code, because existing seeds keep their old transfer metadata.
+- Use a new `model_deploy_strategy_name` after changing model arguments or RFork code, so the planner does not match a receiver with an incompatible old seed.
+- A successful RFork transfer logs `transfer weights starts` and `transfer weights time`. The fallback path logs `RFork transfer failed`.
+
 ---
 
 ## Example Commands & Placeholders

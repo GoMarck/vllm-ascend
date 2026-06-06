@@ -113,6 +113,9 @@ class RForkModelLoader(BaseModelLoader):
             rfork_worker = self.load_config.rfork_worker
         return rfork_worker
 
+    def _requires_processed_layout_transfer(self, model_config: ModelConfig) -> bool:
+        return getattr(model_config, "quantization", None) is not None
+
     def load_model(
         self,
         vllm_config: VllmConfig,
@@ -127,6 +130,7 @@ class RForkModelLoader(BaseModelLoader):
         with set_default_torch_dtype(model_config.dtype):
             need_del = False
             rfork_worker = self._ensure_rfork_worker(vllm_config)
+            processed_layout_transfer = self._requires_processed_layout_transfer(model_config)
             try:
                 if not rfork_worker.is_seed_available():
                     raise RuntimeError("seed is not available.")
@@ -138,6 +142,10 @@ class RForkModelLoader(BaseModelLoader):
                         prefix=prefix,
                     )
                     need_del = True
+
+                if processed_layout_transfer:
+                    logger.info("RFork uses post-load tensor layout transfer for quantized model.")
+                    process_weights_after_loading(model, model_config, target_device)
 
                 weight_load_start_time = time.time()
                 if not rfork_worker.pre_transfer(model):
@@ -152,13 +160,15 @@ class RForkModelLoader(BaseModelLoader):
                 )
 
                 rfork_worker.start_seed_service(model)
-                process_weights_after_loading(model, model_config, target_device)
+                if not processed_layout_transfer:
+                    process_weights_after_loading(model, model_config, target_device)
 
                 return model.eval()
             except Exception as e:
                 logger.warning(f"RFork transfer failed: {e}, clean up and fall back to default loader")
 
                 rfork_worker.post_transfer()
+                rfork_worker.reset_transfer_state()
 
                 if need_del:
                     del model
@@ -179,6 +189,7 @@ class RForkModelLoader(BaseModelLoader):
                     prefix=prefix,
                 )
                 try:
+                    rfork_worker.reset_transfer_state()
                     rfork_worker.start_seed_service(model)
                 except Exception as e:
                     logger.warning(
