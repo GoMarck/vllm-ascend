@@ -15,12 +15,89 @@
 #
 
 import time
+from collections.abc import Iterator
 from typing import Any
 
 import requests
 import torch
 from vllm.logger import logger
 from vllm.utils.network_utils import get_ip, get_open_port, join_host_port
+
+_RFORK_EXTRA_TENSOR_ATTRS = (
+    # W8A8 static postprocess creates these as plain Tensor attributes.
+    "aclnn_input_scale_reciprocal",
+    "aclnn_input_offset",
+    # W8A8 dynamic postprocess may materialize runtime-only tensors.
+    "weight_fp32",
+    "weight_scale_fp32",
+    "weight_1",
+    "weight_2",
+    "weight_1_scale",
+    "weight_2_scale",
+    "weight_1_scale_fp32",
+    "weight_2_scale_fp32",
+    "weight_1_offset",
+    "weight_2_offset",
+    "w13_weight_scale_fp32",
+    "fused_w1_scale",
+    "fused_w2_scale",
+)
+
+_RFORK_EXTRA_TENSOR_LIST_ATTRS = (
+    # W8A8/W4A8 MoE EPLB postprocess stores per-expert runtime tensors in lists.
+    "w13_weight_list",
+    "w2_weight_list",
+    "w13_weight_scale_list",
+    "w2_weight_scale_list",
+    "w13_weight_scale_fp32_list",
+    "w13_scale_bias_list",
+    "w2_scale_bias_list",
+    "fused_w1_scale_list",
+    "fused_w2_scale_list",
+)
+
+
+def _join_tensor_name(module_prefix: str, tensor_name: str) -> str:
+    return f"{module_prefix}.{tensor_name}" if module_prefix else tensor_name
+
+
+def _iter_named_rfork_tensors(model: torch.nn.Module) -> Iterator[tuple[str, torch.Tensor]]:
+    seen_names: set[str] = set()
+
+    for name, tensor in model.named_parameters():
+        if tensor.numel() == 0:
+            continue
+        seen_names.add(name)
+        yield name, tensor
+
+    for module_prefix, module in model.named_modules():
+        for attr_name in _RFORK_EXTRA_TENSOR_ATTRS:
+            tensor = getattr(module, attr_name, None)
+            if not isinstance(tensor, torch.Tensor) or tensor.numel() == 0:
+                continue
+            tensor_name = _join_tensor_name(module_prefix, attr_name)
+            if tensor_name in seen_names:
+                continue
+            seen_names.add(tensor_name)
+            yield tensor_name, tensor
+
+        for attr_name in _RFORK_EXTRA_TENSOR_LIST_ATTRS:
+            tensors = getattr(module, attr_name, None)
+            if not isinstance(tensors, (list, tuple)):
+                continue
+            for idx, tensor in enumerate(tensors):
+                if not isinstance(tensor, torch.Tensor) or tensor.numel() == 0:
+                    continue
+                tensor_name = _join_tensor_name(module_prefix, f"{attr_name}.{idx}")
+                if tensor_name in seen_names:
+                    continue
+                seen_names.add(tensor_name)
+                yield tensor_name, tensor
+
+
+def _get_tensor_ptrs_in_block(address: int, size: int, tensor_ptrs: set[int]) -> set[int]:
+    block_end = address + size
+    return {ptr for ptr in tensor_ptrs if address <= ptr < block_end}
 
 
 class RForkTransferBackend:
@@ -72,17 +149,18 @@ class RForkTransferBackend:
         start_reg_mr_tic = time.time()
 
         weight_mr_dict = {}
-        weight_addr_set = set()
-        for name, weight in model.named_parameters():
+        tensor_ptrs: set[int] = set()
+        for name, tensor in _iter_named_rfork_tensors(model):
             weight_mr_dict[name] = (
-                weight.data_ptr(),
-                weight.numel(),
-                weight.element_size(),
+                tensor.data_ptr(),
+                tensor.numel(),
+                tensor.element_size(),
             )
-            weight_addr_set.add(weight.data_ptr())
+            tensor_ptrs.add(tensor.data_ptr())
 
         memory_snapshot = torch.npu.memory.memory_snapshot()
         weight_blocks_for_reg_mr = []
+        covered_tensor_ptrs: set[int] = set()
         for segment in memory_snapshot:
             current_weight_block = None
             for block in segment.get("blocks", []):
@@ -91,7 +169,11 @@ class RForkTransferBackend:
                 state = block.get("state", "")
                 if address < 0 or size < 0 or state == "":
                     continue
-                if state == "active_allocated" and address in weight_addr_set:
+                block_tensor_ptrs = set()
+                if state == "active_allocated":
+                    block_tensor_ptrs = _get_tensor_ptrs_in_block(address, size, tensor_ptrs)
+                if block_tensor_ptrs:
+                    covered_tensor_ptrs.update(block_tensor_ptrs)
                     if current_weight_block is None:
                         current_weight_block = (address, size)
                     elif current_weight_block[0] + current_weight_block[1] == address:
@@ -104,6 +186,13 @@ class RForkTransferBackend:
                         current_weight_block = (address, size)
             if current_weight_block is not None:
                 weight_blocks_for_reg_mr.append(current_weight_block)
+
+        if tensor_ptrs != covered_tensor_ptrs:
+            logger.error(
+                "Failed to find NPU memory blocks for %d RFork tensors.",
+                len(tensor_ptrs - covered_tensor_ptrs),
+            )
+            return False
 
         addresses, sizes = zip(*weight_blocks_for_reg_mr) if weight_blocks_for_reg_mr else ((), ())
         ret = transfer_engine.batch_register_memory(addresses, sizes)
@@ -119,13 +208,19 @@ class RForkTransferBackend:
         self.registered_weight_blocks = weight_blocks_for_reg_mr
 
         logger.info(
-            "register_memory_region time: %.4fs",
+            "register_memory_region time: %.4fs, tensors: %d, blocks: %d",
             time.time() - start_reg_mr_tic,
+            len(weight_mr_dict),
+            len(weight_blocks_for_reg_mr),
         )
         return True
 
     def unregister_memory_region(self) -> bool:
         transfer_engine = self._get_transfer_engine()
+        if not self.registered_weight_blocks:
+            self.rfork_transfer_engine_weights_info_dict = None
+            return True
+
         start_unreg_mr_tic = time.time()
         ret = transfer_engine.batch_unregister_memory([address for address, _ in self.registered_weight_blocks])
         if ret.is_error():
@@ -160,7 +255,7 @@ class RForkTransferBackend:
         seed_ptr_list = []
         client_ptr_list = []
         client_len_list = []
-        for name, tensor in model.named_parameters():
+        for name, tensor in _iter_named_rfork_tensors(model):
             weight_info = seed_weight_info.get(name, None)
             if weight_info is None:
                 logger.error("Cannot find weight info for %s.", name)

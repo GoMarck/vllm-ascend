@@ -88,11 +88,32 @@ class RForkWorker:
             )
             return False
 
+    def cleanup_transfer_registration(self) -> None:
+        if not self.ready_to_start_seed_service:
+            return
+
+        try:
+            if not self.transfer_backend.unregister_memory_region():
+                logger.warning(
+                    "Failed to unregister RFork memory regions for device_id=%s",
+                    self.device_id,
+                )
+        except Exception as e:
+            logger.warning(
+                "Exception while unregistering RFork memory regions for device_id=%s: %s",
+                self.device_id,
+                e,
+            )
+        finally:
+            self.ready_to_start_seed_service = False
+
     def post_transfer(self):
         if self.rfork_seed is None:
             logger.info("rfork seed is None, no need to release.")
             return True
-        self.seed_protocol.release_seed(self.rfork_seed)
+        rfork_seed = self.rfork_seed
+        self.rfork_seed = None
+        self.seed_protocol.release_seed(rfork_seed)
         return True
 
     def start_seed_service(self, model):

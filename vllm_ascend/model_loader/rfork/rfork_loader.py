@@ -148,6 +148,8 @@ class RForkModelLoader(BaseModelLoader):
                     )
                     need_del = True
 
+                process_weights_after_loading(model, model_config, target_device)
+
                 weight_load_start_time = time.time()
                 if not rfork_worker.pre_transfer(model):
                     raise RuntimeError("pre_transfer failed.")
@@ -161,13 +163,13 @@ class RForkModelLoader(BaseModelLoader):
                 )
 
                 rfork_worker.start_seed_service(model)
-                process_weights_after_loading(model, model_config, target_device)
 
                 return model.eval()
             except Exception as e:
                 logger.warning("RFork transfer failed: %s, clean up and fall back to default loader", e)
 
                 rfork_worker.post_transfer()
+                rfork_worker.cleanup_transfer_registration()
 
                 if need_del:
                     del model
